@@ -1,4 +1,4 @@
-package main
+package shared
 
 import (
 	"bufio"
@@ -86,4 +86,34 @@ func WriteJSON0(out io.Writer, v interface{}) error {
 		return err
 	}
 	return nil
+}
+
+// Copy is same as io.Copy but, does not do dst.WriteFrom(src), but returns both writer errors and reader errors
+func Copy(dst io.Writer, src io.Reader) (written int64, werr, rerr error) {
+	buf := make([]byte, 32*1024)
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				werr = ew
+				break
+			}
+			if nr != nw {
+				werr = io.ErrShortWrite
+				break
+			}
+		}
+		if er == io.EOF {
+			break
+		}
+		if er != nil {
+			rerr = er
+			break
+		}
+	}
+	return written, werr, rerr
 }

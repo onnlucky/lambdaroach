@@ -1,0 +1,5 @@
+{
+    "name": "test",
+    "hostname": "example.com",
+    "command": "python -m SimpleHTTPServer ${PORT}"
+}

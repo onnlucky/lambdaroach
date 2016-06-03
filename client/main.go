@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"lambdaroach/shared"
 	"log"
 	"net"
 	"os"
@@ -49,7 +50,7 @@ func sendFiles(dir string, sub string, conn io.ReadWriter) (filecount int, bytec
 			// resolve links by trying and filling in isdir or isfile
 			linkpath, err2 := os.Readlink(fullpath)
 			if err2 == nil {
-				if !StartsWith(linkpath, "/") {
+				if !shared.StartsWith(linkpath, "/") {
 					linkpath = path.Join(dir, linkpath)
 				}
 				stat, err2 := os.Stat(linkpath)
@@ -63,8 +64,8 @@ func sendFiles(dir string, sub string, conn io.ReadWriter) (filecount int, bytec
 		if isdir {
 			ndir := path.Join(dir, file.Name())
 			nsub := path.Join(sub, file.Name())
-			file := FileMessage{nsub + "/", 0, 0}
-			err = WriteJSON0(conn, file)
+			file := shared.FileMessage{Name: nsub + "/"}
+			err = shared.WriteJSON0(conn, file)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -84,8 +85,8 @@ func sendFiles(dir string, sub string, conn io.ReadWriter) (filecount int, bytec
 		if err != nil {
 			log.Fatal(err)
 		}
-		file := FileMessage{path.Join(sub, file.Name()), len(bytes), 0}
-		err = WriteJSON0(conn, file)
+		file := shared.FileMessage{Name: path.Join(sub, file.Name()), Size: len(bytes)}
+		err = shared.WriteJSON0(conn, file)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -131,9 +132,9 @@ func dialSSH(host string) (io.ReadWriteCloser, error) {
 		log.Fatal(err)
 	}
 	var host2 string
-	if StartsWith(host, "ssh://") {
+	if shared.StartsWith(host, "ssh://") {
 		host2 = host[len("ssh://"):]
-	} else if StartsWith(host, "ssh:") {
+	} else if shared.StartsWith(host, "ssh:") {
 		host2 = host[len("ssh:"):]
 	} else {
 		host2 = host
@@ -181,7 +182,7 @@ func dialSSH(host string) (io.ReadWriteCloser, error) {
 
 func main() {
 	log.SetFlags(log.Flags() | log.Lshortfile)
-	log.SetPrefix("lambdaroach client ")
+	log.SetPrefix(fmt.Sprintf("%s ", path.Base(os.Args[0])))
 	flag.Parse()
 
 	if apppath == nil || *apppath == "" || *appconfig == "./" {
@@ -228,7 +229,7 @@ func main() {
 
 	var conn io.ReadWriteCloser
 	//var err error
-	if StartsWith(*host, "ssh") {
+	if shared.StartsWith(*host, "ssh") {
 		conn, err = dialSSH(*host)
 		conn.Write([]byte{0, 0, 0, 0})
 	} else {
@@ -242,7 +243,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	app := AppMessage{
+	app := shared.AppMessage{
 		Name:    config.Name,
 		Version: version,
 		Command: config.Command,
@@ -250,30 +251,30 @@ func main() {
 		Env:     config.Env,
 	}
 
-	err = WriteJSON0(conn, app)
+	err = shared.WriteJSON0(conn, app)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	in := bufio.NewReader(conn)
-	var accept Accept
-	err = ReadJSON0(in, &accept)
+	var accept shared.Accept
+	err = shared.ReadJSON0(in, &accept)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Print("uploading app: ", app, " as: ", accept.ID)
 
 	filecount, bytecount := sendFiles(*apppath, "", conn)
-	file := FileMessage{"", -1, 0}
-	err = WriteJSON0(conn, file)
+	file := shared.FileMessage{}
+	err = shared.WriteJSON0(conn, file)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	log.Print("uploaded files: ", filecount, ", total bytes: ", bytecount)
 
-	var status Status
-	err = ReadJSON0(in, &status)
+	var status shared.Status
+	err = shared.ReadJSON0(in, &status)
 	if err != nil {
 		log.Fatal(err)
 	}

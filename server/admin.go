@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"io"
+	"lambdaroach/shared"
+	"lambdaroach/uniuri"
 	"log"
 	"net"
 	"os"
 	"path"
 	"time"
-	"uniuri"
 )
 
 // only allow file mode permissions and setgit/setuid/sticky
@@ -22,7 +23,7 @@ func cleanFilePerm(perm int) os.FileMode {
 	return os.FileMode(perm) & (os.ModeSetgid | os.ModeSetuid | os.ModeSticky | os.ModePerm)
 }
 
-func writeFile(base string, file FileMessage, r io.Reader) (int64, error) {
+func writeFile(base string, file shared.FileMessage, r io.Reader) (int64, error) {
 	out, err := os.OpenFile(path.Join(base, file.Name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, cleanFilePerm(file.Perm))
 	if err != nil {
 		return 0, err
@@ -41,8 +42,8 @@ func cleanDirPerm(perm int) os.FileMode {
 	return os.FileMode(perm) & (os.ModeSetgid | os.ModeSetuid | os.ModeSticky | os.ModePerm)
 }
 
-func writeDir(base string, file FileMessage) error {
-	if !EndsWith(file.Name, "/") {
+func writeDir(base string, file shared.FileMessage) error {
+	if !shared.EndsWith(file.Name, "/") {
 		log.Fatal("bad writeDir")
 	}
 	if file.Size != 0 {
@@ -59,7 +60,7 @@ func errorConnection(base string, conn net.Conn, msg string, cerr error) bool {
 			log.Print(err)
 		}
 	}
-	err := WriteJSON0(conn, Status{false, msg})
+	err := shared.WriteJSON0(conn, shared.Status{false, msg})
 	if err != nil {
 		log.Print(err)
 	}
@@ -82,8 +83,8 @@ func handleConnection(conn net.Conn) bool {
 		}
 	}
 
-	var app AppMessage
-	err := ReadJSON0(in, &app)
+	var app shared.AppMessage
+	err := shared.ReadJSON0(in, &app)
 	if err != nil {
 		return errorConnection("", conn, "error reading first message", err)
 	}
@@ -103,7 +104,7 @@ func handleConnection(conn net.Conn) bool {
 		version = lastSite.version + 1
 	}
 
-	err = WriteJSON0(conn, Accept{version, id})
+	err = shared.WriteJSON0(conn, shared.Accept{version, id})
 	if err != nil {
 		return errorConnection(base, conn, "error writing accept", err)
 	}
@@ -111,8 +112,8 @@ func handleConnection(conn net.Conn) bool {
 	var files = 0
 	var bytes = int64(0)
 	for {
-		var file FileMessage
-		err = ReadJSON0(in, &file)
+		var file shared.FileMessage
+		err = shared.ReadJSON0(in, &file)
 		if err != nil {
 			return errorConnection(base, conn, "error reading file message", err)
 		}
@@ -125,7 +126,7 @@ func handleConnection(conn net.Conn) bool {
 			return errorConnection(base, conn, "file size too large", nil)
 		}
 
-		if EndsWith(file.Name, "/") && file.Size <= 0 {
+		if shared.EndsWith(file.Name, "/") && file.Size <= 0 {
 			if base != "" {
 				err := writeDir(base, file)
 				if err != nil {
@@ -145,7 +146,7 @@ func handleConnection(conn net.Conn) bool {
 		//log.Print("file: ", file.Name, " size: ", file.Size)
 	}
 
-	err = WriteJSON0(conn, Status{true, ""})
+	err = shared.WriteJSON0(conn, shared.Status{true, ""})
 	if err != nil {
 		log.Print(err)
 	}

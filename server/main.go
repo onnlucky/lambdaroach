@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"lambdaroach/shared"
 	"log"
 	"math/rand"
 	"net"
@@ -17,36 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 )
-
-// Copy is same as io.Copy but, does not do dst.WriteFrom(src), but does return both writer errors and reader errors
-func Copy(dst io.Writer, src io.Reader) (written int64, werr, rerr error) {
-	buf := make([]byte, 32*1024)
-	for {
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			nw, ew := dst.Write(buf[0:nr])
-			if nw > 0 {
-				written += int64(nw)
-			}
-			if ew != nil {
-				werr = ew
-				break
-			}
-			if nr != nw {
-				werr = io.ErrShortWrite
-				break
-			}
-		}
-		if er == io.EOF {
-			break
-		}
-		if er != nil {
-			rerr = er
-			break
-		}
-	}
-	return written, werr, rerr
-}
 
 // RunningSite is an up and running application server
 type RunningSite struct {
@@ -144,7 +115,7 @@ func matchSite(host, path string) (*Site, *RunningSite) {
 	sites := routes[host]
 	for _, site := range sites {
 		for _, prefix := range site.paths {
-			if StartsWith(path, prefix) {
+			if shared.StartsWith(path, prefix) {
 				return site, site.running
 			}
 		}
@@ -420,7 +391,7 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(res.StatusCode)
 
 	defer res.Body.Close()
-	_, werr, rerr := Copy(w, res.Body)
+	_, werr, rerr := shared.Copy(w, res.Body)
 	if werr != nil {
 		log.Print("client write error: ", err)
 	}

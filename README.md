@@ -28,12 +28,12 @@ served from the new instances.
 
 And upload it to a localhost staging server
 ```
-app $ lambdaroachserver
+app $ lambdaroach &
 http server listening on port: [::]:8000
 ...
-app $ lambdaroach -h localhost
+app $ roachctl -h localhost
 ...
-uploaded files: 2 bytes: 132
+uploaded files: 2, total bytes: 165
 ok
 app $ curl http://localhost:8000
 <title>Hello World!</title>
@@ -43,6 +43,9 @@ app $ curl http://localhost:8000
 App servers must either pick up the port to listen to from the PORT environment variable, or the system will replace any
 occurance of `${PORT}` in the `command` config.
 
+# Installing
+
+`make install`
 
 # Future
 
