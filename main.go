@@ -18,26 +18,6 @@ import (
 	"time"
 )
 
-// StartsWith check if string s starts with string prefix
-func StartsWith(s, prefix string) bool {
-	sn := len(s)
-	pn := len(prefix)
-	if sn < pn {
-		return false
-	}
-	return s[0:pn] == prefix
-}
-
-// EndsWith check if string s ends with string postfix
-func EndsWith(s, postfix string) bool {
-	sn := len(s)
-	pn := len(postfix)
-	if sn < pn {
-		return false
-	}
-	return s[sn-pn:sn] == postfix
-}
-
 // Copy is same as io.Copy but, does not do dst.WriteFrom(src), but does return both writer errors and reader errors
 func Copy(dst io.Writer, src io.Reader) (written int64, werr, rerr error) {
 	buf := make([]byte, 32*1024)
@@ -99,6 +79,7 @@ type Site struct {
 var lock = sync.RWMutex{}
 var launchlock = sync.Mutex{}
 var sites []*Site
+var latestSites []*Site
 var routes = make(map[string][]*Site)
 var port = 15000
 
@@ -106,23 +87,55 @@ type byVersion []*Site
 
 func (a byVersion) Len() int           { return len(a) }
 func (a byVersion) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a byVersion) Less(i, j int) bool { return a[i].version < a[j].version }
+func (a byVersion) Less(i, j int) bool { return a[i].version > a[j].version }
 
-func newSite(site *Site) {
+func addSite(site *Site) {
+	log.Print("adding site:", site.hostnames)
+
 	lock.Lock()
 	defer lock.Unlock()
-	for _, s := range sites {
-		if s.id == site.id && s.version == site.version {
-			panic("registering known site")
+
+	added := false
+	for i, s := range latestSites {
+		if s.id == site.id {
+			if s.version == site.version {
+				panic("registering known site")
+			}
+			latestSites[i] = site
+			added = true
+			break
 		}
+	}
+	if !added {
+		latestSites = append(latestSites, site)
 	}
 
 	sites = append(sites, site)
-	log.Print("adding site:", site.hostnames)
 	for _, host := range site.hostnames {
 		routes[host] = append(routes[host], site)
 		sort.Sort(byVersion(routes[host]))
 	}
+
+	if len(latestSites) == 1 {
+		routes["localhost"] = append(routes["localhost"], site)
+		sort.Sort(byVersion(routes["localhost"]))
+	} else {
+		routes["localhost"] = []*Site{}
+	}
+}
+
+func findSite(id string) *Site {
+	lock.Lock()
+	defer lock.Unlock()
+	var res *Site
+	for _, s := range sites {
+		if s.id == id {
+			if res == nil || res.version < s.version {
+				res = s
+			}
+		}
+	}
+	return res
 }
 
 func matchSite(host, path string) (*Site, *RunningSite) {
@@ -288,7 +301,7 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if running != nil && running.error {
-		if time.Since(running.start).Seconds() > 20 {
+		if time.Since(running.start).Seconds() >= 5 {
 			log.Print("removing error app: ", site.id, " ", running.id)
 			func() {
 				lock.Lock()
@@ -340,23 +353,41 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if time.Since(running.start).Seconds() < 20 {
 		// if just started, allow some grace
-		tries := 0
 		for {
-			tries++
 			conn, err = net.Dial("tcp", running.addr)
-			if err == nil || tries >= 200 {
+			if err == nil {
+				break
+			}
+			if time.Since(running.start).Seconds() >= 20 {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
 	} else {
 		conn, err = net.Dial("tcp", running.addr)
+		// TODO if err, relaunch and retry this part
 	}
 	if err != nil {
 		write500(w, r, start, "connecting to app")
 		stop(site, running, err)
 		return
 	}
+
+	// append to, or set the X-Forwarded-For header
+	clientIP, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		if prior, ok := r.Header["X-Forwarded-For"]; ok {
+			clientIP = strings.Join(prior, ", ") + ", " + clientIP
+		}
+		r.Header.Set("X-Forwarded-For", clientIP)
+	}
+
+	// extra security if tls
+	if r.TLS != nil {
+		w.Header().Add("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+	}
+
+	// and write the request that came in to the downstream connection
 	err = r.Write(conn)
 	if err != nil {
 		write500(w, r, start, "writing to app")
@@ -415,6 +446,11 @@ func main() {
 		}
 	}
 	log.Printf("http server listening on port: %s", listener.Addr())
-	newSite(&Site{"localhost", 0, []string{"localhost"}, []string{"/"}, []string{}, "node app.js", "/Users/ogorter/code/website/", nil})
-	http.Serve(listener, http.HandlerFunc(serve))
+	//addSite(&Site{"localhost", 0, []string{"localhost"}, []string{"/"}, []string{}, "node app.js", "/Users/ogorter/code/website/", nil})
+	go func() {
+		log.Print(http.ListenAndServeTLS(":443", "cert.pem", "privkey.pem", http.HandlerFunc(serve)))
+		log.Print(http.ListenAndServeTLS(":4443", "cert.pem", "privkey.pem", http.HandlerFunc(serve)))
+	}()
+	go http.Serve(listener, http.HandlerFunc(serve))
+	serveAdmin()
 }
