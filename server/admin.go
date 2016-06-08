@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"crypto/tls"
 	"io"
 	"io/ioutil"
@@ -179,6 +180,23 @@ func handleConnection(conn net.Conn) bool {
 		log.Print(err)
 	}
 
+	var certid = []byte{}
+	if len(pem) > 0 && len(key) > 0 {
+		h := md5.New()
+		h.Write(pem)
+		h.Write(key)
+		certid = h.Sum(nil)
+		if !hasCertificate(certid) {
+			log.Print("adding certificate to https")
+			cert, err2 := tls.X509KeyPair(pem, key)
+			if err2 != nil {
+				log.Print(err2)
+			} else {
+				addCertificate(cert, certid)
+			}
+		}
+	}
+
 	log.Print("adding site to server: ", app.Name, " ", version)
 	addSite(&Site{
 		id:        app.Name,
@@ -188,17 +206,8 @@ func handleConnection(conn net.Conn) bool {
 		env:       app.Env,
 		command:   app.Command,
 		data:      base,
+		certid:    certid,
 	})
-
-	if len(pem) > 0 && len(key) > 0 {
-		log.Print("setting up tls")
-		cert, err2 := tls.X509KeyPair(pem, key)
-		if err2 != nil {
-			log.Print(err2)
-		} else {
-			addCertificate(cert)
-		}
-	}
 	return true
 }
 

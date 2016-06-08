@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -47,6 +48,7 @@ type Site struct {
 	command   string
 	data      string // path where the data resides
 	running   *RunningSite
+	certid    []byte
 }
 
 var lock = sync.RWMutex{}
@@ -406,35 +408,48 @@ func serve(w http.ResponseWriter, r *http.Request) {
 
 var tlsLock = sync.RWMutex{}
 var tlsConfig = &tls.Config{}
-var certIds = []int{} // shadow list of tlsConfig.Certificates but given an id
-var nextCertID = 0
+var certHashes = [][]byte{}
 
-func addCertificate(cert tls.Certificate) int {
+func hasCertificate(hash []byte) bool {
+	tlsLock.RLock()
+	defer tlsLock.RUnlock()
+
+	for _, v := range certHashes {
+		if bytes.Equal(hash, v) {
+			return true
+		}
+	}
+	return false
+}
+
+func addCertificate(cert tls.Certificate, hash []byte) {
 	tlsLock.Lock()
 	defer tlsLock.Unlock()
+
+	for _, v := range certHashes {
+		if bytes.Equal(hash, v) {
+			return
+		}
+	}
 
 	tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
 	tlsConfig.BuildNameToCertificate()
-	id := nextCertID
-	certIds = append(certIds, id)
-	nextCertID++
-	return id
+	certHashes = append(certHashes, hash)
 }
 
-func removeCertificate(id int) {
+func removeCertificate(hash []byte) {
 	tlsLock.Lock()
 	defer tlsLock.Unlock()
 
-	for at, v := range certIds {
-		if v == id {
+	for at, v := range certHashes {
+		if bytes.Equal(hash, v) {
 			// note: seriously, this is remove(certIds, at)
-			certIds = append(certIds[:at], certIds[at+1:]...)
+			certHashes = append(certHashes[:at], certHashes[at+1:]...)
 			tlsConfig.Certificates = append(tlsConfig.Certificates[:at], tlsConfig.Certificates[at+1:]...)
 			tlsConfig.BuildNameToCertificate()
 			return
 		}
 	}
-	log.Fatal("removing non cert id: ", id)
 }
 
 func getCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
