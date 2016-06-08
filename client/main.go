@@ -22,13 +22,38 @@ var host = flag.String("h", "", "[ssh:]host to connect with, default is ssh:app.
 var port = flag.String("p", "8888", "port to connect, normal port is 8888")
 var apppath = flag.String("d", ".", "application path, default is the current directory")
 var appconfig = flag.String("f", "", "app config file, default is appdir/lambda.config.json or ./lambda.config.json")
+var skipfiles = map[string]bool{}
 
 // Config from lambda.config.json
 type Config struct {
-	Name     string   `json:"name"`
-	Hostname string   `json:"hostname"`
-	Command  string   `json:"command"`
-	Env      []string `json:"env"`
+	Name        string   `json:"name"`
+	Hostname    string   `json:"hostname"`
+	Command     string   `json:"command"`
+	Env         []string `json:"env"`
+	Certificate *string  `json:"certificate"`
+	PrivateKey  *string  `json:"privatekey"`
+}
+
+func sendFile(path, name string, conn io.ReadWriter) (int, error) {
+	// TODO stream file instead ...
+	bytes, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	file := shared.FileMessage{Name: name, Size: len(bytes)}
+	err = shared.WriteJSON0(conn, file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	written, err := conn.Write(bytes)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if written != len(bytes) {
+		log.Fatal("unable to write all bytes??")
+	}
+	return written, nil
 }
 
 func sendFiles(dir string, sub string, conn io.ReadWriter) (filecount int, bytecount int64) {
@@ -41,6 +66,12 @@ func sendFiles(dir string, sub string, conn io.ReadWriter) (filecount int, bytec
 		if file.Name()[0] == '.' {
 			//log.Print("skipping hidden file: ", file.Name())
 			continue
+		}
+
+		if sub == "" {
+			if _, ok := skipfiles[file.Name()]; ok {
+				continue
+			}
 		}
 
 		fullpath := path.Join(dir, file.Name())
@@ -80,23 +111,9 @@ func sendFiles(dir string, sub string, conn io.ReadWriter) (filecount int, bytec
 			continue
 		}
 
-		// TODO stream file instead ...
-		bytes, err := ioutil.ReadFile(path.Join(dir, file.Name()))
+		written, err := sendFile(path.Join(dir, file.Name()), path.Join(sub, file.Name()), conn)
 		if err != nil {
 			log.Fatal(err)
-		}
-		file := shared.FileMessage{Name: path.Join(sub, file.Name()), Size: len(bytes)}
-		err = shared.WriteJSON0(conn, file)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		written, err := conn.Write(bytes)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if written != len(bytes) {
-			log.Fatal("unable to write all bytes??")
 		}
 		filecount++
 		bytecount += int64(written)
@@ -193,6 +210,7 @@ func main() {
 	if appconfig1 == "" && *apppath != "." {
 		appconfig1 = path.Join(*apppath, "lambda.config.json")
 		appconfig2 = "lambda.config.json"
+		skipfiles["lambda.config.json"] = true
 	}
 
 	version := flag.Arg(0)
@@ -251,6 +269,15 @@ func main() {
 		Env:     config.Env,
 	}
 
+	// use tls if appropriate
+	if config.Certificate != nil && config.PrivateKey != nil {
+		app.TLS = true
+		if *apppath == "." {
+			skipfiles[*config.Certificate] = true
+			skipfiles[*config.PrivateKey] = true
+		}
+	}
+
 	err = shared.WriteJSON0(conn, app)
 	if err != nil {
 		log.Fatal(err)
@@ -264,7 +291,29 @@ func main() {
 	}
 	log.Print("uploading app: ", app, " as: ", accept.ID)
 
-	filecount, bytecount := sendFiles(*apppath, "", conn)
+	var filecount = 0
+	var bytecount = int64(0)
+
+	// send cert.pem and key.pem
+	if app.TLS {
+		written, err2 := sendFile(*config.Certificate, "cert.pem", conn)
+		if err2 != nil {
+			log.Fatal(err2)
+		}
+		filecount++
+		bytecount += int64(written)
+		written, err2 = sendFile(*config.PrivateKey, "key.pem", conn)
+		if err2 != nil {
+			log.Fatal(err2)
+		}
+		filecount++
+		bytecount += int64(written)
+		log.Print("uploaded certificate and private key")
+	}
+
+	log.Print("uploading files...")
+	filecount, bytecount = sendFiles(*apppath, "", conn)
+
 	file := shared.FileMessage{}
 	err = shared.WriteJSON0(conn, file)
 	if err != nil {

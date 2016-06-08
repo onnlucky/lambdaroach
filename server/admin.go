@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"io"
+	"io/ioutil"
 	"lambdaroach/shared"
 	"lambdaroach/uniuri"
 	"log"
@@ -109,6 +111,13 @@ func handleConnection(conn net.Conn) bool {
 		return errorConnection(base, conn, "error writing accept", err)
 	}
 
+	var needtls = 0
+	if app.TLS {
+		needtls = 2
+	}
+	var pem = []byte{}
+	var key = []byte{}
+
 	var files = 0
 	var bytes = int64(0)
 	for {
@@ -139,6 +148,25 @@ func handleConnection(conn net.Conn) bool {
 		files++
 		bytes += int64(file.Size)
 		filein := io.LimitReader(in, int64(file.Size))
+
+		if needtls == 2 {
+			needtls = 1
+			pem, err = ioutil.ReadAll(filein)
+			if err != nil {
+				return errorConnection(base, conn, "error reading pem", err)
+			}
+			log.Print("got private certificate: ", len(pem))
+			continue
+		} else if needtls == 1 {
+			needtls = 0
+			key, err = ioutil.ReadAll(filein)
+			if err != nil {
+				return errorConnection(base, conn, "error reading key", err)
+			}
+			log.Print("got private key: ", len(key))
+			continue
+		}
+
 		_, err2 := writeFile(base, file, filein)
 		if err2 != nil {
 			return errorConnection(base, conn, "error creating file", err)
@@ -161,6 +189,16 @@ func handleConnection(conn net.Conn) bool {
 		command:   app.Command,
 		data:      base,
 	})
+
+	if len(pem) > 0 && len(key) > 0 {
+		log.Print("setting up tls")
+		cert, err2 := tls.X509KeyPair(pem, key)
+		if err2 != nil {
+			log.Print(err2)
+		} else {
+			addCertificate(cert)
+		}
+	}
 	return true
 }
 
@@ -169,6 +207,7 @@ func serveAdmin() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("admin listening on port: %s", ln.Addr())
 	for {
 		conn, err := ln.Accept()
 		if err != nil {

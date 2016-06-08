@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -402,10 +404,109 @@ func serve(w http.ResponseWriter, r *http.Request) {
 	log.Printf("%s %s %d %0.3f", r.Method, r.RequestURI, res.StatusCode, time.Since(start).Seconds())
 }
 
+var tlsLock = sync.RWMutex{}
+var tlsConfig = &tls.Config{}
+var certIds = []int{} // shadow list of tlsConfig.Certificates but given an id
+var nextCertID = 0
+
+func addCertificate(cert tls.Certificate) int {
+	tlsLock.Lock()
+	defer tlsLock.Unlock()
+
+	tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
+	tlsConfig.BuildNameToCertificate()
+	id := nextCertID
+	certIds = append(certIds, id)
+	nextCertID++
+	return id
+}
+
+func removeCertificate(id int) {
+	tlsLock.Lock()
+	defer tlsLock.Unlock()
+
+	for at, v := range certIds {
+		if v == id {
+			// note: seriously, this is remove(certIds, at)
+			certIds = append(certIds[:at], certIds[at+1:]...)
+			tlsConfig.Certificates = append(tlsConfig.Certificates[:at], tlsConfig.Certificates[at+1:]...)
+			tlsConfig.BuildNameToCertificate()
+			return
+		}
+	}
+	log.Fatal("removing non cert id: ", id)
+}
+
+func getCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	tlsLock.RLock()
+	defer tlsLock.RUnlock()
+	c := tlsConfig
+
+	// same algorithm as tls.Config.getCertificate, but it is not public, and now we hold a lock
+	if len(c.Certificates) == 0 {
+		return nil, errors.New("no tls site configured")
+	}
+
+	if len(c.Certificates) == 1 || c.NameToCertificate == nil {
+		// There's only one choice, so no point doing any work.
+		return &c.Certificates[0], nil
+	}
+
+	name := strings.ToLower(clientHello.ServerName)
+	for len(name) > 0 && name[len(name)-1] == '.' {
+		name = name[:len(name)-1]
+	}
+
+	if cert, ok := c.NameToCertificate[name]; ok {
+		return cert, nil
+	}
+
+	// try replacing labels in the name with wildcards until we get a
+	// match.
+	labels := strings.Split(name, ".")
+	for i := range labels {
+		labels[i] = "*"
+		candidate := strings.Join(labels, ".")
+		if cert, ok := c.NameToCertificate[candidate]; ok {
+			return cert, nil
+		}
+	}
+
+	// If nothing matches, return the first certificate.
+	return &c.Certificates[0], nil
+}
+
+func maintls() {
+	var err error
+	config := &tls.Config{}
+	config.GetCertificate = getCertificate
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	listener, err := net.Listen("tcp", ":443")
+	if err != nil {
+		var err2 error
+		listener, err2 = net.Listen("tcp", ":4443")
+		if err2 != nil {
+			log.Print("err: ", err)
+			log.Print("err: ", err2)
+		}
+	}
+	if listener == nil {
+		return
+	}
+
+	// TODO would be really nice if we could open/close 443/4443 depending on tls configured
+	tlsListener := tls.NewListener(listener.(*net.TCPListener), config)
+	log.Printf("http server listening on port: %s", listener.Addr())
+	go http.Serve(tlsListener, http.HandlerFunc(serve))
+}
+
 func main() {
 	log.SetFlags(log.Flags() | log.Lmicroseconds | log.Lshortfile)
 	log.SetPrefix("lambdaroach ")
-	log.Print("starting")
 
 	listener, err := net.Listen("tcp", ":80")
 	if err != nil {
@@ -417,11 +518,7 @@ func main() {
 		}
 	}
 	log.Printf("http server listening on port: %s", listener.Addr())
-	//addSite(&Site{"localhost", 0, []string{"localhost"}, []string{"/"}, []string{}, "node app.js", "/Users/ogorter/code/website/", nil})
-	go func() {
-		log.Print(http.ListenAndServeTLS(":443", "cert.pem", "privkey.pem", http.HandlerFunc(serve)))
-		log.Print(http.ListenAndServeTLS(":4443", "cert.pem", "privkey.pem", http.HandlerFunc(serve)))
-	}()
 	go http.Serve(listener, http.HandlerFunc(serve))
+	maintls()
 	serveAdmin()
 }

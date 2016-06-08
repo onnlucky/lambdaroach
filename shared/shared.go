@@ -14,6 +14,7 @@ type AppMessage struct {
 	Command string   `json:"command"`
 	Hosts   []string `json:"hosts"`
 	Env     []string `json:"env"`
+	TLS     bool     `json:"tls"`
 }
 
 // Accept ...
