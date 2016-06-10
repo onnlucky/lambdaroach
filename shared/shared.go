@@ -9,12 +9,14 @@ import (
 
 // AppMessage ...
 type AppMessage struct {
-	Name    string   `json:"name"`
-	Version string   `json:"version"`
-	Command string   `json:"command"`
-	Hosts   []string `json:"hosts"`
-	Env     []string `json:"env"`
-	TLS     bool     `json:"tls"`
+	Name             string   `json:"name"`
+	Version          string   `json:"version"`
+	Command          string   `json:"command"`
+	Hosts            []string `json:"hosts"`
+	Env              []string `json:"env"`
+	TLS              bool     `json:"tls"`
+	LetsEncryptEmail string   `json:"letsencryptmail"`
+	HTTPSOnly        bool     `json:"httpsonly"`
 }
 
 // Accept ...

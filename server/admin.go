@@ -197,6 +197,16 @@ func handleConnection(conn net.Conn) bool {
 		}
 	}
 
+	if app.LetsEncryptEmail != "" {
+		if letsEncrypt.Registered() {
+			log.Print("letsencrypt already registered")
+		} else {
+			log.Print("registering at letsencrypt.org: ", app.LetsEncryptEmail)
+			letsEncrypt.Register(app.LetsEncryptEmail, nil)
+		}
+		letsEncrypt.SetHosts(app.Hosts)
+	}
+
 	log.Print("adding site to server: ", app.Name, " ", version)
 	addSite(&Site{
 		id:        app.Name,
@@ -207,6 +217,7 @@ func handleConnection(conn net.Conn) bool {
 		command:   app.Command,
 		data:      base,
 		certid:    certid,
+		httpsOnly: app.HTTPSOnly,
 	})
 	return true
 }

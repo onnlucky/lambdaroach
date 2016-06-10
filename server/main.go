@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"rsc.io/letsencrypt"
 )
 
 // RunningSite is an up and running application server
@@ -49,6 +51,8 @@ type Site struct {
 	data      string // path where the data resides
 	running   *RunningSite
 	certid    []byte
+	static    *http.Handler
+	httpsOnly bool // redirect to https
 }
 
 var lock = sync.RWMutex{}
@@ -57,6 +61,7 @@ var sites []*Site
 var latestSites []*Site
 var routes = make(map[string][]*Site)
 var port = 15000
+var letsEncrypt = letsencrypt.Manager{}
 
 type byVersion []*Site
 
@@ -262,6 +267,19 @@ func write500(w http.ResponseWriter, r *http.Request, start time.Time, msg strin
 	log.Printf("%s %s 500 %0.3f (%s)", r.Method, r.RequestURI, time.Since(start).Seconds(), msg)
 }
 
+func serveStatic(site *Site, w http.ResponseWriter, r *http.Request) {
+	if site.static == nil {
+		func() {
+			lock.Lock()
+			defer lock.Unlock()
+			static := http.FileServer(http.Dir(site.data))
+			site.static = &static
+		}()
+	}
+	static := *site.static
+	static.ServeHTTP(w, r)
+}
+
 // this receives the http requests, checks what to do, and replies
 func serve(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -272,6 +290,27 @@ func serve(w http.ResponseWriter, r *http.Request) {
 
 	if site == nil {
 		write404(w, r, start)
+		return
+	}
+
+	if site.httpsOnly && r.TLS == nil {
+		if r.Host == "" {
+			write404(w, r, start)
+			return
+		}
+
+		host, _, _ := net.SplitHostPort(r.Host)
+		// TODO perhaps we want to know the https port, incase it is 4443
+		u := r.URL
+		u.Host = host
+		u.Scheme = "https"
+		http.Redirect(w, r, u.String(), 302)
+		log.Print("redirected to: ", u.String())
+		return
+	}
+
+	if site.command == "" {
+		serveStatic(site, w, r)
 		return
 	}
 
@@ -453,6 +492,12 @@ func removeCertificate(hash []byte) {
 }
 
 func getCertificate(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	// with this call here, letsencrypt will do the SNI "handshake" if relevant
+	cert, err := letsEncrypt.GetCertificate(clientHello)
+	if cert != nil || err != nil {
+		return cert, err
+	}
+
 	tlsLock.RLock()
 	defer tlsLock.RUnlock()
 	c := tlsConfig
@@ -522,6 +567,12 @@ func maintls() {
 func main() {
 	log.SetFlags(log.Flags() | log.Lmicroseconds | log.Lshortfile)
 	log.SetPrefix("lambdaroach ")
+
+	// TODO this should be per email, per hosts, not global
+	if err := letsEncrypt.CacheFile("letsencrypt.cache"); err != nil {
+		log.Fatal(err)
+	}
+	letsEncrypt.SetHosts([]string{})
 
 	listener, err := net.Listen("tcp", ":80")
 	if err != nil {

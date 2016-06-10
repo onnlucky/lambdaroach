@@ -24,14 +24,16 @@ var apppath = flag.String("d", ".", "application path, default is the current di
 var appconfig = flag.String("f", "", "app config file, default is appdir/lambda.config.json or ./lambda.config.json")
 var skipfiles = map[string]bool{}
 
-// Config from lambda.config.json
+// Config for lambda.config.json
 type Config struct {
-	Name        string   `json:"name"`
-	Hostname    string   `json:"hostname"`
-	Command     string   `json:"command"`
-	Env         []string `json:"env"`
-	Certificate *string  `json:"certificate"`
-	PrivateKey  *string  `json:"privatekey"`
+	Name        string   `json:"name"`        // name of site, must be unique
+	Hostname    string   `json:"hostname"`    // hostname of site
+	Command     string   `json:"command"`     // command to run, null or "" to serve as static site
+	Env         []string `json:"env"`         // environment variables added to command
+	Certificate *string  `json:"certificate"` // to configure tls, the public key
+	PrivateKey  *string  `json:"privatekey"`  // to configure tls, the private key
+	LetsEncrypt *string  `json:"letsencrypt"` // to configure tls using letsencrypt, your email
+	HTTPSOnly   bool     `json:"httpsonly"`   // if site opened using http, redirect to https immediately
 }
 
 func sendFile(path, name string, conn io.ReadWriter) (int, error) {
@@ -275,6 +277,20 @@ func main() {
 		if *apppath == "." {
 			skipfiles[*config.Certificate] = true
 			skipfiles[*config.PrivateKey] = true
+		}
+		if config.LetsEncrypt != nil {
+			log.Fatal("cannot configure both 'certificate'/'privatekey' and 'letsencrypt'")
+		}
+		if config.HTTPSOnly {
+			app.HTTPSOnly = true
+		}
+	}
+
+	// or use letsencrypt
+	if config.LetsEncrypt != nil {
+		app.LetsEncryptEmail = *config.LetsEncrypt
+		if config.HTTPSOnly {
+			app.HTTPSOnly = true
 		}
 	}
 

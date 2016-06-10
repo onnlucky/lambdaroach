@@ -19,4 +19,8 @@ test: roachctl lambdaroach
 clean:
 	rm -rf roachctl lambdaroach
 
-.PHONY: all install test clean
+run: lambdaroach
+	./lambdaroach
+
+
+.PHONY: all install test clean run
