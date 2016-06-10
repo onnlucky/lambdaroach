@@ -201,10 +201,11 @@ func handleConnection(conn net.Conn) bool {
 		if letsEncrypt.Registered() {
 			log.Print("letsencrypt already registered")
 		} else {
-			log.Print("registering at letsencrypt.org: ", app.LetsEncryptEmail)
+			// TODO this is done only once :( ... should be more flexible
+			log.Print("registering at letsencrypt.org: ", app.LetsEncryptEmail, app.Hosts)
+			letsEncrypt.SetHosts(app.Hosts)
 			letsEncrypt.Register(app.LetsEncryptEmail, nil)
 		}
-		letsEncrypt.SetHosts(app.Hosts)
 	}
 
 	log.Print("adding site to server: ", app.Name, " ", version)

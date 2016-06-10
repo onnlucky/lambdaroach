@@ -1,0 +1,17 @@
+[Unit]
+Description=Lambdaroach Application Server
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lambdaroach
+WorkingDirectory=/tmp
+Restart=always
+StandardInput=null
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=lambdaroach
+LimitNOFILE=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target

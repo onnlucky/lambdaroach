@@ -569,6 +569,7 @@ func main() {
 	log.SetPrefix("lambdaroach ")
 
 	// TODO this should be per email, per hosts, not global
+	// TODO now tls generation is done on server, and saved there, perhaps better use client over admin?
 	if err := letsEncrypt.CacheFile("letsencrypt.cache"); err != nil {
 		log.Fatal(err)
 	}
